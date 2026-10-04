@@ -8,6 +8,7 @@ import Combine
     @Published private(set) var isLoadingServers = false
     @Published private(set) var serverError: String?
     @Published private(set) var connectionSeconds = 0
+    @Published private(set) var connectionError: String?
     @Published var isPermissionSheetPresented = false
     @Published var isOnboarded = true
     @Published var searchText = ""
@@ -16,32 +17,54 @@ import Combine
     private var connectionTask: Task<Void, Never>?
     private let vpnGate = VPNGateService()
     private let connectionService = VPNConnectionService()
+    private var isRefreshingServers = false
+    private var lastServerRefresh: Date?
     var filteredServers: [VPNServer] { let result = servers.filter { searchText.isEmpty || $0.country.localizedCaseInsensitiveContains(searchText) || $0.city.localizedCaseInsensitiveContains(searchText) || $0.name.localizedCaseInsensitiveContains(searchText) }; return sortByPing ? result.sorted { $0.ping < $1.ping } : result }
-    func requestConnection() { switch vpnState { case .disconnected, .failed: isPermissionSheetPresented = true; case .connected: disconnect(); case .connecting, .disconnecting: break } }
-    func allowVPNAccess() { isPermissionSheetPresented = false; connect() }
-    func refreshServers() async {
+    func requestConnection() {
+        switch vpnState {
+        case .disconnected, .failed:
+            if UserDefaults.standard.bool(forKey: "vpnGatePermissionExplained") {
+                connect()
+            } else {
+                isPermissionSheetPresented = true
+            }
+        case .connected: disconnect()
+        case .connecting, .disconnecting: break
+        }
+    }
+    func allowVPNAccess() {
+        UserDefaults.standard.set(true, forKey: "vpnGatePermissionExplained")
+        isPermissionSheetPresented = false
+        connect()
+    }
+    func refreshServers(force: Bool = false) async {
+        guard !isRefreshingServers else { return }
+        if !force, let lastServerRefresh, Date().timeIntervalSince(lastServerRefresh) < 3 { return }
+        isRefreshingServers = true
+        lastServerRefresh = Date()
         isLoadingServers = true
         serverError = nil
-        do {
-            let imported = try await vpnGate.fetchServers()
-            let measured = await withTaskGroup(of: VPNServer.self, returning: [VPNServer].self) { group in
-                for server in imported {
-                    group.addTask {
-                        let latency = await self.vpnGate.ping(server) ?? 0
-                        return VPNServer(id: server.id, flag: server.flag, country: server.country, city: server.city, name: server.name, ip: server.ip, ping: latency, load: server.load, status: latency == 0 ? .offline : .available)
-                    }
+        // Live VPN Gate import is intentionally disabled for now.
+        // let imported = try await vpnGate.fetchServers()
+        let imported = DemoData.servers
+        let service = vpnGate
+        let measured = await withTaskGroup(of: VPNServer.self, returning: [VPNServer].self) { group in
+            for server in imported {
+                group.addTask {
+                    let latency = await service.ping(server) ?? 0
+                    return VPNServer(id: server.id, flag: server.flag, country: server.country, city: server.city, name: server.name, ip: server.ip, ping: latency, load: server.load, status: latency == 0 ? .offline : .available)
                 }
-                return await group.reduce(into: []) { $0.append($1) }
             }
-            servers = measured.sorted { ($0.ping == 0 ? Int.max : $0.ping) < ($1.ping == 0 ? Int.max : $1.ping) }
-        } catch {
-            serverError = error.localizedDescription
+            return await group.reduce(into: []) { $0.append($1) }
         }
+        servers = measured.sorted { ($0.ping == 0 ? Int.max : $0.ping) < ($1.ping == 0 ? Int.max : $1.ping) }
         isLoadingServers = false
+        isRefreshingServers = false
     }
     func connect() {
         connectionTask?.cancel()
         vpnState = .connecting
+        connectionError = nil
         connectionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_400_000_000)
             guard let self, !Task.isCancelled else { return }
@@ -51,6 +74,7 @@ import Combine
                 connectionSeconds = 0
             } catch {
                 vpnState = .failed
+                connectionError = error.localizedDescription
                 return
             }
             while !Task.isCancelled {

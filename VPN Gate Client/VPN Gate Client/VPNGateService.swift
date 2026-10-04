@@ -57,6 +57,11 @@ struct VPNGateService {
                 }
             }
             connection.start(queue: .global(qos: .utility))
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
+                guard gate.claim() else { return }
+                connection.cancel()
+                continuation.resume(returning: nil)
+            }
         }
     }
 
@@ -79,9 +84,9 @@ struct VPNGateService {
 
 private final class PingCompletionGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var completed = false
+    private nonisolated(unsafe) var completed = false
 
-    func claim() -> Bool {
+    nonisolated func claim() -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard !completed else { return false }
         completed = true

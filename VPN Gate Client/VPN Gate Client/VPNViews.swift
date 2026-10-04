@@ -33,7 +33,7 @@ struct HomeView: View {
             .navigationTitle("VPN Gate")
         }
     }
-    private var subtitle: String { switch viewModel.vpnState { case .disconnected: "Connect to protect your internet traffic."; case .connecting: "Establishing a secure connection..."; case .connected: "Your connection is private and secure."; case .disconnecting: "Closing your secure connection..."; case .failed: "We couldn’t connect to this server. Try again or choose another." } }
+    private var subtitle: String { switch viewModel.vpnState { case .disconnected: "Connect to protect your internet traffic."; case .connecting: "Establishing a secure connection..."; case .connected: "Your connection is private and secure."; case .disconnecting: "Closing your secure connection..."; case .failed: viewModel.connectionError ?? "We couldn’t connect to this server. Try again or choose another." } }
 }
 
 private struct HomeSection<Content: View>: View {
@@ -119,7 +119,7 @@ struct ServersView: View {
                 if viewModel.isLoadingServers {
                     HStack { Spacer(); ProgressView("Updating servers…"); Spacer() }.padding(.vertical, 24)
                 } else if let error = viewModel.serverError {
-                    VStack(spacing: 10) { Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center); Button("Retry") { Task { await viewModel.refreshServers() } }.buttonStyle(.borderedProminent) }.frame(maxWidth: .infinity).padding(.vertical, 24)
+                    VStack(spacing: 10) { Text(error).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center); Button("Retry") { Task { await viewModel.refreshServers(force: true) } }.buttonStyle(.borderedProminent) }.frame(maxWidth: .infinity).padding(.vertical, 24)
                 } else if viewModel.filteredServers.isEmpty {
                     EmptyState()
                 } else {
@@ -142,7 +142,7 @@ struct ServersView: View {
         .navigationTitle("Servers")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await viewModel.refreshServers() } } label: {
+                Button { Task { await viewModel.refreshServers(force: true) } } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.isLoadingServers)
